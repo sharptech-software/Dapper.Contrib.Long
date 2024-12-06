@@ -181,7 +181,7 @@ namespace Dapper.Contrib.Extensions
         /// <param name="transaction">The transaction to run under, null (the default) if none</param>
         /// <param name="commandTimeout">Number of seconds before command execution timeout</param>
         /// <returns>Entity of T</returns>
-        public static T Get<T>(this IDbConnection connection, dynamic id, IDbTransaction transaction = null, int? commandTimeout = null) where T : class
+        public static T Get<T>(this IDbConnection connection, dynamic id, IDbTransaction? transaction = null, int? commandTimeout = null) where T : class
         {
             var type = typeof(T);
 
@@ -243,7 +243,7 @@ namespace Dapper.Contrib.Extensions
         /// <param name="transaction">The transaction to run under, null (the default) if none</param>
         /// <param name="commandTimeout">Number of seconds before command execution timeout</param>
         /// <returns>Entity of T</returns>
-        public static IEnumerable<T> GetAll<T>(this IDbConnection connection, IDbTransaction transaction = null, int? commandTimeout = null) where T : class
+        public static IEnumerable<T> GetAll<T>(this IDbConnection connection, IDbTransaction? transaction = null, int? commandTimeout = null) where T : class
         {
             var type = typeof(T);
             var cacheType = typeof(List<T>);
@@ -331,7 +331,7 @@ namespace Dapper.Contrib.Extensions
         /// <param name="transaction">The transaction to run under, null (the default) if none</param>
         /// <param name="commandTimeout">Number of seconds before command execution timeout</param>
         /// <returns>Identity of inserted entity, or number of inserted rows if inserting a list</returns>
-        public static long Insert<T>(this IDbConnection connection, T entityToInsert, IDbTransaction transaction = null, int? commandTimeout = null) where T : class
+        public static long Insert<T>(this IDbConnection connection, T entityToInsert, IDbTransaction? transaction = null, int? commandTimeout = null) where T : class
         {
             var isList = false;
 
@@ -434,7 +434,7 @@ namespace Dapper.Contrib.Extensions
         /// <param name="transaction">The transaction to run under, null (the default) if none</param>
         /// <param name="commandTimeout">Number of seconds before command execution timeout</param>
         /// <returns>true if updated, false if not found or not modified (tracked entities)</returns>
-        public static bool Update<T>(this IDbConnection connection, T entityToUpdate, IDbTransaction transaction = null, int? commandTimeout = null) where T : class
+        public static bool Update<T>(this IDbConnection connection, T entityToUpdate, IDbTransaction? transaction = null, int? commandTimeout = null) where T : class
         {
             if (entityToUpdate is IProxy proxy && !proxy.IsDirty)
             {
@@ -505,7 +505,7 @@ namespace Dapper.Contrib.Extensions
         /// <param name="transaction">The transaction to run under, null (the default) if none</param>
         /// <param name="commandTimeout">Number of seconds before command execution timeout</param>
         /// <returns>true if deleted, false if not found</returns>
-        public static bool Delete<T>(this IDbConnection connection, T entityToDelete, IDbTransaction transaction = null, int? commandTimeout = null) where T : class
+        public static bool Delete<T>(this IDbConnection connection, T entityToDelete, IDbTransaction? transaction = null, int? commandTimeout = null) where T : class
         {
             if (entityToDelete == null)
                 throw new ArgumentException("Cannot Delete null Object", nameof(entityToDelete));
@@ -561,7 +561,7 @@ namespace Dapper.Contrib.Extensions
         /// <param name="transaction">The transaction to run under, null (the default) if none</param>
         /// <param name="commandTimeout">Number of seconds before command execution timeout</param>
         /// <returns>true if deleted, false if none found</returns>
-        public static bool DeleteAll<T>(this IDbConnection connection, IDbTransaction transaction = null, int? commandTimeout = null) where T : class
+        public static bool DeleteAll<T>(this IDbConnection connection, IDbTransaction? transaction = null, int? commandTimeout = null) where T : class
         {
             var type = typeof(T);
             var name = GetTableName(type);
@@ -860,7 +860,7 @@ public partial interface ISqlAdapter
     /// <param name="keyProperties">The key columns in this table.</param>
     /// <param name="entityToInsert">The entity to insert.</param>
     /// <returns>The Id of the row created.</returns>
-    long Insert(IDbConnection connection, IDbTransaction transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert);
+    long Insert(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert);
 
     /// <summary>
     /// Adds the name of a column.
@@ -893,7 +893,7 @@ public partial class SqlServerAdapter : ISqlAdapter
     /// <param name="keyProperties">The key columns in this table.</param>
     /// <param name="entityToInsert">The entity to insert.</param>
     /// <returns>The Id of the row created.</returns>
-    public long Insert(IDbConnection connection, IDbTransaction transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
+    public long Insert(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
     {
         var cmd = $"insert into {tableName} ({columnList}) values ({parameterList});select SCOPE_IDENTITY() id";
         var multi = connection.QueryMultiple(cmd, entityToInsert, transaction, commandTimeout);
@@ -949,7 +949,7 @@ public partial class SqlCeServerAdapter : ISqlAdapter
     /// <param name="keyProperties">The key columns in this table.</param>
     /// <param name="entityToInsert">The entity to insert.</param>
     /// <returns>The Id of the row created.</returns>
-    public long Insert(IDbConnection connection, IDbTransaction transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
+    public long Insert(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
     {
         var cmd = $"insert into {tableName} ({columnList}) values ({parameterList})";
         connection.Execute(cmd, entityToInsert, transaction, commandTimeout);
@@ -1005,7 +1005,7 @@ public partial class MySqlAdapter : ISqlAdapter
     /// <param name="keyProperties">The key columns in this table.</param>
     /// <param name="entityToInsert">The entity to insert.</param>
     /// <returns>The Id of the row created.</returns>
-    public long Insert(IDbConnection connection, IDbTransaction transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
+    public long Insert(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
     {
         var cmd = $"insert into {tableName} ({columnList}) values ({parameterList})";
         connection.Execute(cmd, entityToInsert, transaction, commandTimeout);
@@ -1060,7 +1060,7 @@ public partial class PostgresAdapter : ISqlAdapter
     /// <param name="keyProperties">The key columns in this table.</param>
     /// <param name="entityToInsert">The entity to insert.</param>
     /// <returns>The Id of the row created.</returns>
-    public long Insert(IDbConnection connection, IDbTransaction transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
+    public long Insert(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
     {
         var sb = new StringBuilder();
         sb.AppendFormat("insert into {0} ({1}) values ({2})", tableName, columnList, parameterList);
@@ -1136,7 +1136,7 @@ public partial class SQLiteAdapter : ISqlAdapter
     /// <param name="keyProperties">The key columns in this table.</param>
     /// <param name="entityToInsert">The entity to insert.</param>
     /// <returns>The Id of the row created.</returns>
-    public long Insert(IDbConnection connection, IDbTransaction transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
+    public long Insert(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
     {
         var cmd = $"INSERT INTO {tableName} ({columnList}) VALUES ({parameterList}); SELECT last_insert_rowid() id";
         var multi = connection.QueryMultiple(cmd, entityToInsert, transaction, commandTimeout);
@@ -1189,7 +1189,7 @@ public partial class FbAdapter : ISqlAdapter
     /// <param name="keyProperties">The key columns in this table.</param>
     /// <param name="entityToInsert">The entity to insert.</param>
     /// <returns>The Id of the row created.</returns>
-    public long Insert(IDbConnection connection, IDbTransaction transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
+    public long Insert(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
     {
         var cmd = $"insert into {tableName} ({columnList}) values ({parameterList})";
         connection.Execute(cmd, entityToInsert, transaction, commandTimeout);

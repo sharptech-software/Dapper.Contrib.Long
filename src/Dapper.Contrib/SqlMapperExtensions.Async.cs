@@ -22,7 +22,7 @@ namespace Dapper.Contrib.Extensions
         /// <param name="transaction">The transaction to run under, null (the default) if none</param>
         /// <param name="commandTimeout">Number of seconds before command execution timeout</param>
         /// <returns>Entity of T</returns>
-        public static async Task<T> GetAsync<T>(this IDbConnection connection, dynamic id, IDbTransaction transaction = null, int? commandTimeout = null) where T : class
+        public static async Task<T> GetAsync<T>(this IDbConnection connection, dynamic id, IDbTransaction? transaction = null, int? commandTimeout = null) where T : class
         {
             var type = typeof(T);
             if (!GetQueries.TryGetValue(type.TypeHandle, out string sql))
@@ -78,7 +78,7 @@ namespace Dapper.Contrib.Extensions
         /// <param name="transaction">The transaction to run under, null (the default) if none</param>
         /// <param name="commandTimeout">Number of seconds before command execution timeout</param>
         /// <returns>Entity of T</returns>
-        public static Task<IEnumerable<T>> GetAllAsync<T>(this IDbConnection connection, IDbTransaction transaction = null, int? commandTimeout = null) where T : class
+        public static Task<IEnumerable<T>> GetAllAsync<T>(this IDbConnection connection, IDbTransaction? transaction = null, int? commandTimeout = null) where T : class
         {
             var type = typeof(T);
             var cacheType = typeof(List<T>);
@@ -99,7 +99,7 @@ namespace Dapper.Contrib.Extensions
             return GetAllAsyncImpl<T>(connection, transaction, commandTimeout, sql, type);
         }
 
-        private static async Task<IEnumerable<T>> GetAllAsyncImpl<T>(IDbConnection connection, IDbTransaction transaction, int? commandTimeout, string sql, Type type) where T : class
+        private static async Task<IEnumerable<T>> GetAllAsyncImpl<T>(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string sql, Type type) where T : class
         {
             var result = await connection.QueryAsync(sql, transaction: transaction, commandTimeout: commandTimeout).ConfigureAwait(false);
             var list = new List<T>();
@@ -136,7 +136,7 @@ namespace Dapper.Contrib.Extensions
         /// <param name="commandTimeout">Number of seconds before command execution timeout</param>
         /// <param name="sqlAdapter">The specific ISqlAdapter to use, auto-detected based on connection if null</param>
         /// <returns>Identity of inserted entity</returns>
-        public static Task<long> InsertAsync<T>(this IDbConnection connection, T entityToInsert, IDbTransaction transaction = null,
+        public static Task<long> InsertAsync<T>(this IDbConnection connection, T entityToInsert, IDbTransaction? transaction = null,
             int? commandTimeout = null, ISqlAdapter sqlAdapter = null) where T : class
         {
             var type = typeof(T);
@@ -230,7 +230,7 @@ namespace Dapper.Contrib.Extensions
         /// <param name="transaction">The transaction to run under, null (the default) if none</param>
         /// <param name="commandTimeout">Number of seconds before command execution timeout</param>
         /// <returns>true if updated, false if not found or not modified (tracked entities)</returns>
-        public static async Task<bool> UpdateAsync<T>(this IDbConnection connection, T entityToUpdate, IDbTransaction transaction = null, int? commandTimeout = null) where T : class
+        public static async Task<bool> UpdateAsync<T>(this IDbConnection connection, T entityToUpdate, IDbTransaction? transaction = null, int? commandTimeout = null) where T : class
         {
             if ((entityToUpdate is IProxy proxy) && !proxy.IsDirty)
             {
@@ -301,7 +301,7 @@ namespace Dapper.Contrib.Extensions
         /// <param name="transaction">The transaction to run under, null (the default) if none</param>
         /// <param name="commandTimeout">Number of seconds before command execution timeout</param>
         /// <returns>true if deleted, false if not found</returns>
-        public static async Task<bool> DeleteAsync<T>(this IDbConnection connection, T entityToDelete, IDbTransaction transaction = null, int? commandTimeout = null) where T : class
+        public static async Task<bool> DeleteAsync<T>(this IDbConnection connection, T entityToDelete, IDbTransaction? transaction = null, int? commandTimeout = null) where T : class
         {
             if (entityToDelete == null)
                 throw new ArgumentException("Cannot Delete null Object", nameof(entityToDelete));
@@ -357,7 +357,7 @@ namespace Dapper.Contrib.Extensions
         /// <param name="transaction">The transaction to run under, null (the default) if none</param>
         /// <param name="commandTimeout">Number of seconds before command execution timeout</param>
         /// <returns>true if deleted, false if none found</returns>
-        public static async Task<bool> DeleteAllAsync<T>(this IDbConnection connection, IDbTransaction transaction = null, int? commandTimeout = null) where T : class
+        public static async Task<bool> DeleteAllAsync<T>(this IDbConnection connection, IDbTransaction? transaction = null, int? commandTimeout = null) where T : class
         {
             var type = typeof(T);
             var statement = "DELETE FROM " + GetTableName(type);
@@ -381,7 +381,7 @@ public partial interface ISqlAdapter
     /// <param name="keyProperties">The key columns in this table.</param>
     /// <param name="entityToInsert">The entity to insert.</param>
     /// <returns>The Id of the row created.</returns>
-    Task<long> InsertAsync(IDbConnection connection, IDbTransaction transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert);
+    Task<long> InsertAsync(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert);
 }
 
 public partial class SqlServerAdapter
@@ -398,7 +398,7 @@ public partial class SqlServerAdapter
     /// <param name="keyProperties">The key columns in this table.</param>
     /// <param name="entityToInsert">The entity to insert.</param>
     /// <returns>The Id of the row created.</returns>
-    public async Task<long> InsertAsync(IDbConnection connection, IDbTransaction transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
+    public async Task<long> InsertAsync(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
     {
         var cmd = $"INSERT INTO {tableName} ({columnList}) values ({parameterList}); SELECT SCOPE_IDENTITY() id";
         var multi = await connection.QueryMultipleAsync(cmd, entityToInsert, transaction, commandTimeout).ConfigureAwait(false);
@@ -431,7 +431,7 @@ public partial class SqlCeServerAdapter
     /// <param name="keyProperties">The key columns in this table.</param>
     /// <param name="entityToInsert">The entity to insert.</param>
     /// <returns>The Id of the row created.</returns>
-    public async Task<long> InsertAsync(IDbConnection connection, IDbTransaction transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
+    public async Task<long> InsertAsync(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
     {
         var cmd = $"INSERT INTO {tableName} ({columnList}) VALUES ({parameterList})";
         await connection.ExecuteAsync(cmd, entityToInsert, transaction, commandTimeout).ConfigureAwait(false);
@@ -464,7 +464,7 @@ public partial class MySqlAdapter
     /// <param name="keyProperties">The key columns in this table.</param>
     /// <param name="entityToInsert">The entity to insert.</param>
     /// <returns>The Id of the row created.</returns>
-    public async Task<long> InsertAsync(IDbConnection connection, IDbTransaction transaction, int? commandTimeout, string tableName,
+    public async Task<long> InsertAsync(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string tableName,
         string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
     {
         var cmd = $"INSERT INTO {tableName} ({columnList}) VALUES ({parameterList})";
@@ -497,7 +497,7 @@ public partial class PostgresAdapter
     /// <param name="keyProperties">The key columns in this table.</param>
     /// <param name="entityToInsert">The entity to insert.</param>
     /// <returns>The Id of the row created.</returns>
-    public async Task<long> InsertAsync(IDbConnection connection, IDbTransaction transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
+    public async Task<long> InsertAsync(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
     {
         var sb = new StringBuilder();
         sb.AppendFormat("INSERT INTO {0} ({1}) VALUES ({2})", tableName, columnList, parameterList);
@@ -550,7 +550,7 @@ public partial class SQLiteAdapter
     /// <param name="keyProperties">The key columns in this table.</param>
     /// <param name="entityToInsert">The entity to insert.</param>
     /// <returns>The Id of the row created.</returns>
-    public async Task<long> InsertAsync(IDbConnection connection, IDbTransaction transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
+    public async Task<long> InsertAsync(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
     {
         var cmd = $"INSERT INTO {tableName} ({columnList}) VALUES ({parameterList}); SELECT last_insert_rowid() id";
         var multi = await connection.QueryMultipleAsync(cmd, entityToInsert, transaction, commandTimeout).ConfigureAwait(false);
@@ -580,7 +580,7 @@ public partial class FbAdapter
     /// <param name="keyProperties">The key columns in this table.</param>
     /// <param name="entityToInsert">The entity to insert.</param>
     /// <returns>The Id of the row created.</returns>
-    public async Task<long> InsertAsync(IDbConnection connection, IDbTransaction transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
+    public async Task<long> InsertAsync(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
     {
         var cmd = $"insert into {tableName} ({columnList}) values ({parameterList})";
         await connection.ExecuteAsync(cmd, entityToInsert, transaction, commandTimeout).ConfigureAwait(false);
