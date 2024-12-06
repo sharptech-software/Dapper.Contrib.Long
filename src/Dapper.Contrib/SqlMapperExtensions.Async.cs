@@ -167,7 +167,31 @@ namespace Dapper.Contrib.Extensions
             var allProperties = TypePropertiesCache(type);
             var keyProperties = KeyPropertiesCache(type).ToList();
             var computedProperties = ComputedPropertiesCache(type);
-            var allPropertiesExceptKeyAndComputed = allProperties.Except(keyProperties.Union(computedProperties)).ToList();
+            var hasDefaultProperties = HasDefaultPropertiesCache(type);
+
+            var excludeDefaultProperties = new List<PropertyInfo>();
+
+            if (hasDefaultProperties.Count > 0)
+            {
+                // If there are any properties with HasDefaultAttribute, we need to check to see if the values are null so we can exclude them from the insert
+                foreach (var property in hasDefaultProperties)
+                {
+                    if (isList)
+                    {
+                        var nullFound = AreListEntityPropertiesNull(entityToInsert as IEnumerable<object>, property);
+
+                        if (nullFound)
+                            excludeDefaultProperties.Add(property);
+                    }
+                    else
+                    {
+                        if (property.GetValue(entityToInsert) == null)
+                            excludeDefaultProperties.Add(property);
+                    }
+                }
+            }
+
+            var allPropertiesExceptKeyAndComputed = allProperties.Except(keyProperties.Union(computedProperties).Union(excludeDefaultProperties)).ToList();
 
             for (var i = 0; i < allPropertiesExceptKeyAndComputed.Count; i++)
             {

@@ -56,6 +56,7 @@ namespace Dapper.Contrib.Extensions
         private static readonly ConcurrentDictionary<RuntimeTypeHandle, IEnumerable<PropertyInfo>> ExplicitKeyProperties = new ConcurrentDictionary<RuntimeTypeHandle, IEnumerable<PropertyInfo>>();
         private static readonly ConcurrentDictionary<RuntimeTypeHandle, IEnumerable<PropertyInfo>> TypeProperties = new ConcurrentDictionary<RuntimeTypeHandle, IEnumerable<PropertyInfo>>();
         private static readonly ConcurrentDictionary<RuntimeTypeHandle, IEnumerable<PropertyInfo>> ComputedProperties = new ConcurrentDictionary<RuntimeTypeHandle, IEnumerable<PropertyInfo>>();
+        private static readonly ConcurrentDictionary<RuntimeTypeHandle, IEnumerable<PropertyInfo>> HasDefaultProperties = new ConcurrentDictionary<RuntimeTypeHandle, IEnumerable<PropertyInfo>>();
         private static readonly ConcurrentDictionary<RuntimeTypeHandle, string> GetQueries = new ConcurrentDictionary<RuntimeTypeHandle, string>();
         private static readonly ConcurrentDictionary<RuntimeTypeHandle, string> TypeTableName = new ConcurrentDictionary<RuntimeTypeHandle, string>();
 
@@ -82,6 +83,19 @@ namespace Dapper.Contrib.Extensions
 
             ComputedProperties[type.TypeHandle] = computedProperties;
             return computedProperties;
+        }
+
+        private static List<PropertyInfo> HasDefaultPropertiesCache(Type type)
+        {
+            if (HasDefaultProperties.TryGetValue(type.TypeHandle, out IEnumerable<PropertyInfo> pi))
+            {
+                return pi.ToList();
+            }
+
+            var hasDefaultProperties = TypePropertiesCache(type).Where(p => p.GetCustomAttributes(true).Any(a => a is HasDefaultAttribute)).ToList();
+
+            HasDefaultProperties[type.TypeHandle] = hasDefaultProperties;
+            return hasDefaultProperties;
         }
 
         private static List<PropertyInfo> ExplicitKeyPropertiesCache(Type type)
@@ -347,7 +361,31 @@ namespace Dapper.Contrib.Extensions
             var allProperties = TypePropertiesCache(type);
             var keyProperties = KeyPropertiesCache(type);
             var computedProperties = ComputedPropertiesCache(type);
-            var allPropertiesExceptKeyAndComputed = allProperties.Except(keyProperties.Union(computedProperties)).ToList();
+            var hasDefaultProperties = HasDefaultPropertiesCache(type);
+
+            var excludeDefaultProperties = new List<PropertyInfo>();
+
+            if (hasDefaultProperties.Count > 0)
+            {
+                // If there are any properties with HasDefaultAttribute, we need to check to see if the values are null so we can exclude them from the insert
+                foreach (var property in hasDefaultProperties)
+                {
+                    if (isList)
+                    {
+                        var nullFound = AreListEntityPropertiesNull(entityToInsert as IEnumerable<object>, property);
+
+                        if (nullFound)
+                            excludeDefaultProperties.Add(property);
+                    }
+                    else
+                    {
+                        if (property.GetValue(entityToInsert) == null)
+                            excludeDefaultProperties.Add(property);
+                    }
+                }
+            }
+
+            var allPropertiesExceptKeyAndComputed = allProperties.Except(keyProperties.Union(computedProperties).Union(excludeDefaultProperties)).ToList();
 
             var adapter = GetFormatter(connection);
 
@@ -698,6 +736,35 @@ namespace Dapper.Contrib.Extensions
                 typeBuilder.DefineMethodOverride(currSetPropMthdBldr, setMethod);
             }
         }
+
+        private static bool AreListEntityPropertiesNull(IEnumerable<object>? entities, PropertyInfo propertyInfo)
+        {
+            // If it is a list, we need to check each entity in the list. They can all be null or all have values, but not a mixture
+
+            if (entities == null)
+                return true;
+
+            bool nullFound = false;
+            bool nonNullFound = false;
+
+            foreach (var entity in entities)
+            {
+                if (propertyInfo.GetValue(entity) == null)
+                    nullFound = true;
+                else
+                    nonNullFound = true;
+            }
+
+            if (nullFound)
+            {
+                if (nonNullFound)
+                    throw new ArgumentException("Cannot mix a list of entities with null and non-null values in a property marked with the HasDefault attribute.");
+
+                return true;
+            }
+
+            return false;
+        }
     }
 
     /// <summary>
@@ -763,6 +830,14 @@ namespace Dapper.Contrib.Extensions
     /// </summary>
     [AttributeUsage(AttributeTargets.Property)]
     public class ComputedAttribute : Attribute
+    {
+    }
+
+    /// <summary>
+    /// Specifies that this column has a default value and can be null when inserting a row.
+    /// </summary>
+    [AttributeUsage(AttributeTargets.Property)]
+    public class HasDefaultAttribute : Attribute
     {
     }
 }
