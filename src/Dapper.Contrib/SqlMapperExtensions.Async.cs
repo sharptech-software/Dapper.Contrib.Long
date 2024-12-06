@@ -218,7 +218,7 @@ namespace Dapper.Contrib.Extensions
 
             //insert list of entities
             var cmd = $"INSERT INTO {name} ({sbColumnList}) values ({sbParameterList})";
-            return connection.ExecuteAsync(cmd, entityToInsert, transaction, commandTimeout);
+            return connection.ExecuteAsync(cmd, entityToInsert, transaction, commandTimeout).ContinueWith(task => (long)task.Result);
         }
 
         /// <summary>
