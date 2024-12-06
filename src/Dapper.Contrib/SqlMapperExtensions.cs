@@ -72,7 +72,7 @@ namespace Dapper.Contrib.Extensions
                 ["fbconnection"] = new FbAdapter()
             };
 
-        private static List<PropertyInfo> ComputedPropertiesCache(Type type)
+        public static List<PropertyInfo> ComputedPropertiesCache(Type type)
         {
             if (ComputedProperties.TryGetValue(type.TypeHandle, out IEnumerable<PropertyInfo> pi))
             {
@@ -85,7 +85,7 @@ namespace Dapper.Contrib.Extensions
             return computedProperties;
         }
 
-        private static List<PropertyInfo> HasDefaultPropertiesCache(Type type)
+        public static List<PropertyInfo> HasDefaultPropertiesCache(Type type)
         {
             if (HasDefaultProperties.TryGetValue(type.TypeHandle, out IEnumerable<PropertyInfo> pi))
             {
@@ -98,7 +98,7 @@ namespace Dapper.Contrib.Extensions
             return hasDefaultProperties;
         }
 
-        private static List<PropertyInfo> ExplicitKeyPropertiesCache(Type type)
+        public static List<PropertyInfo> ExplicitKeyPropertiesCache(Type type)
         {
             if (ExplicitKeyProperties.TryGetValue(type.TypeHandle, out IEnumerable<PropertyInfo> pi))
             {
@@ -111,7 +111,7 @@ namespace Dapper.Contrib.Extensions
             return explicitKeyProperties;
         }
 
-        private static List<PropertyInfo> KeyPropertiesCache(Type type)
+        public static List<PropertyInfo> KeyPropertiesCache(Type type)
         {
             if (KeyProperties.TryGetValue(type.TypeHandle, out IEnumerable<PropertyInfo> pi))
             {
@@ -134,7 +134,7 @@ namespace Dapper.Contrib.Extensions
             return keyProperties;
         }
 
-        private static List<PropertyInfo> TypePropertiesCache(Type type)
+        public static List<PropertyInfo> TypePropertiesCache(Type type)
         {
             if (TypeProperties.TryGetValue(type.TypeHandle, out IEnumerable<PropertyInfo> pis))
             {
@@ -291,7 +291,7 @@ namespace Dapper.Contrib.Extensions
         public static TableNameMapperDelegate TableNameMapper;
 #pragma warning restore CA2211 // Non-constant fields should not be visible
 
-        private static string GetTableName(Type type)
+        public static string GetTableName(Type type)
         {
             if (TypeTableName.TryGetValue(type.TypeHandle, out string name)) return name;
 
