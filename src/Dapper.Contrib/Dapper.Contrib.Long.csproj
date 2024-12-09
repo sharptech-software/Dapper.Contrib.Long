@@ -1,10 +1,10 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <AssemblyName>Dapper.Contrib</AssemblyName>
-    <Title>Dapper.Contrib</Title>
+    <AssemblyName>Dapper.Contrib.Long</AssemblyName>
+    <Title>Dapper.Contrib.Long</Title>
     <PackageTags>orm;sql;micro-orm;dapper</PackageTags>
-    <Description>The official collection of get, insert, update and delete helpers for Dapper.net. Also handles lists of entities and optional "dirty" tracking of interface-based entities.</Description>
-    <Authors>Sam Saffron;Johan Danforth</Authors>
+    <Description>Fork of Dapper.Contrib so we can update dependencies and customize things.</Description>
+    <Authors>Anthony Sharp</Authors>
     <TargetFrameworks>net461;net8.0</TargetFrameworks>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <NoWarn>$(NoWarn);CA1050</NoWarn>
