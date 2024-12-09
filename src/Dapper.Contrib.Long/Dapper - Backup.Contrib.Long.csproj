@@ -8,6 +8,12 @@
     <TargetFrameworks>net461;net8.0</TargetFrameworks>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <NoWarn>$(NoWarn);CA1050</NoWarn>
+    <Version>0.1.0</Version>
+    <Copyright>2024 SharpTech LLC</Copyright>
+    <PackageIcon />
+    <PackageProjectUrl />
+    <RepositoryUrl />
+    <RepositoryType />
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Dapper" Version="2.0.78" />
