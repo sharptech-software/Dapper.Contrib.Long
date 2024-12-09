@@ -7,7 +7,7 @@ using System.Text;
 using System.Threading.Tasks;
 using Dapper;
 
-namespace Dapper.Contrib.Long.Extensions
+namespace Dapper.Contrib.Extensions
 {
     public static partial class SqlMapperExtensions
     {

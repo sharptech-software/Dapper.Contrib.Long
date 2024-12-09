@@ -10,7 +10,7 @@ using System.Threading;
 
 using Dapper;
 
-namespace Dapper.Contrib.Long.Extensions
+namespace Dapper.Contrib.Extensions
 {
     /// <summary>
     /// The Dapper.Contrib extensions for Dapper
