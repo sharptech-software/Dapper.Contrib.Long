@@ -12,7 +12,7 @@
     <Copyright>2024 SharpTech LLC</Copyright>
     <PackageIcon />
     <PackageProjectUrl />
-    <RepositoryUrl />
+    <RepositoryUrl>https://github.com/sharptech-software/Dapper.Contrib.Long</RepositoryUrl>
     <RepositoryType />
   </PropertyGroup>
   <ItemGroup>
