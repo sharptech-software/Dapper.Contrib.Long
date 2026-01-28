@@ -30,7 +30,10 @@ namespace Dapper.Contrib.Extensions
                 var key = GetSingleKey<T>(nameof(GetAsync));
                 var name = GetTableName(type);
 
-                sql = $"SELECT * FROM {name} WHERE {key.Name} = @id";
+                var includeRowVersion = typeof(IVersionedEntity).IsAssignableFrom(type) && IsPostgreSql(connection);
+                var columns = includeRowVersion ? "*, xmin::text::bigint AS RowVersion" : "*";
+
+                sql = $"SELECT {columns} FROM {name} WHERE {key.Name} = @id";
                 GetQueries[type.TypeHandle] = sql;
             }
 
@@ -229,7 +232,7 @@ namespace Dapper.Contrib.Extensions
         /// <param name="entityToUpdate">Entity to be updated</param>
         /// <param name="transaction">The transaction to run under, null (the default) if none</param>
         /// <param name="commandTimeout">Number of seconds before command execution timeout</param>
-        /// <returns>true if updated, false if not found or not modified (tracked entities)</returns>
+        /// <returns>true if updated, false if not found or not modified (tracked entities) or concurrency conflict (versioned entities)</returns>
         public static async Task<bool> UpdateAsync<T>(this IDbConnection connection, T entityToUpdate, IDbTransaction? transaction = null, int? commandTimeout = null) where T : class
         {
             if ((entityToUpdate is IProxy proxy) && !proxy.IsDirty)
@@ -261,6 +264,15 @@ namespace Dapper.Contrib.Extensions
             if (keyProperties.Count == 0 && explicitKeyProperties.Count == 0)
                 throw new ArgumentException("Entity must have at least one [Key] or [ExplicitKey] property");
 
+            var includeRowVersion = typeof(IVersionedEntity).IsAssignableFrom(type) && IsPostgreSql(connection);
+
+            if (includeRowVersion)
+            {
+                var versionedEntity = (IVersionedEntity)entityToUpdate;
+                if (versionedEntity.RowVersion == null)
+                    throw new InvalidOperationException($"RowVersion must be set for optimistic concurrency on {type.Name}.");
+            }
+
             var name = GetTableName(type);
 
             var sb = new StringBuilder();
@@ -288,8 +300,47 @@ namespace Dapper.Contrib.Extensions
                 if (i < keyProperties.Count - 1)
                     sb.Append(" and ");
             }
-            var updated = await connection.ExecuteAsync(sb.ToString(), entityToUpdate, commandTimeout: commandTimeout, transaction: transaction).ConfigureAwait(false);
-            return updated > 0;
+
+            if (includeRowVersion)
+            {
+                sb.Append(" and xmin::text::bigint = @RowVersion");
+                sb.Append(" returning xmin::text::bigint");
+
+                var newXmin = await connection.QuerySingleOrDefaultAsync<long?>(
+                    sb.ToString(), entityToUpdate, transaction, commandTimeout).ConfigureAwait(false);
+
+                if (newXmin == null)
+                {
+                    // Determine if it's a conflict or not found
+                    var keyProperty = keyProperties.First();
+                    var id = keyProperty.GetValue(entityToUpdate);
+
+                    var currentXmin = await connection.QuerySingleOrDefaultAsync<long?>(
+                        $"SELECT xmin::text::bigint FROM {name} WHERE {keyProperty.Name} = @Id",
+                        new { Id = id }, transaction, commandTimeout).ConfigureAwait(false);
+
+                    if (currentXmin != null)
+                    {
+                        // Row exists but version didn't match — conflict
+                        throw new ConcurrencyConflictException(
+                            type,
+                            id,
+                            ((IVersionedEntity)entityToUpdate).RowVersion,
+                            currentXmin);
+                    }
+
+                    // Row doesn't exist
+                    return false;
+                }
+
+                ((IVersionedEntity)entityToUpdate).RowVersion = newXmin.Value;
+                return true;
+            }
+            else
+            {
+                var updated = await connection.ExecuteAsync(sb.ToString(), entityToUpdate, commandTimeout: commandTimeout, transaction: transaction).ConfigureAwait(false);
+                return updated > 0;
+            }
         }
 
         /// <summary>
@@ -504,9 +555,13 @@ public partial class PostgresAdapter
 
         // If no primary key then safe to assume a join table with not too much data to return
         var propertyInfos = keyProperties as PropertyInfo[] ?? keyProperties.ToArray();
+        var includeRowVersion = entityToInsert is IVersionedEntity;
+
         if (propertyInfos.Length == 0)
         {
             sb.Append(" RETURNING *");
+            if (includeRowVersion)
+                sb.Append(", xmin::text::bigint AS rowversion");
         }
         else
         {
@@ -519,6 +574,8 @@ public partial class PostgresAdapter
                 first = false;
                 sb.Append(property.Name);
             }
+            if (includeRowVersion)
+                sb.Append(", xmin::text::bigint AS rowversion");
         }
 
         var results = await connection.QueryAsync(sb.ToString(), entityToInsert, transaction, commandTimeout).ConfigureAwait(false);
@@ -532,6 +589,13 @@ public partial class PostgresAdapter
             if (id == 0)
                 id = Convert.ToInt64(value);
         }
+
+        if (includeRowVersion)
+        {
+            var rowVersion = ((IDictionary<string, object>)results.First())["rowversion"];
+            ((IVersionedEntity)entityToInsert).RowVersion = Convert.ToInt64(rowVersion);
+        }
+
         return id;
     }
 }

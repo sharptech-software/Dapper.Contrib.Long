@@ -189,8 +189,11 @@ namespace Dapper.Contrib.Extensions
             {
                 var key = GetSingleKey<T>(nameof(Get));
                 var name = GetTableName(type);
+                
+                var includeRowVersion = typeof(IVersionedEntity).IsAssignableFrom(type) && IsPostgreSql(connection);
+                var columns = includeRowVersion ? "*, xmin::text::bigint AS RowVersion" : "*";
 
-                sql = $"select * from {name} where {key.Name} = @id";
+                sql = $"select {columns} from {name} where {key.Name} = @id";
                 GetQueries[type.TypeHandle] = sql;
             }
 
@@ -465,6 +468,15 @@ namespace Dapper.Contrib.Extensions
             if (keyProperties.Count == 0 && explicitKeyProperties.Count == 0)
                 throw new ArgumentException("Entity must have at least one [Key] or [ExplicitKey] property");
 
+            var includeRowVersion = typeof(IVersionedEntity).IsAssignableFrom(type) && IsPostgreSql(connection);
+
+            if (includeRowVersion)
+            {
+                var versionedEntity = (IVersionedEntity)entityToUpdate;
+                if (versionedEntity.RowVersion == null)
+                    throw new InvalidOperationException($"RowVersion must be set for optimistic concurrency on {type.Name}.");
+            }
+
             var name = GetTableName(type);
 
             var sb = new StringBuilder();
@@ -492,8 +504,47 @@ namespace Dapper.Contrib.Extensions
                 if (i < keyProperties.Count - 1)
                     sb.Append(" and ");
             }
-            var updated = connection.Execute(sb.ToString(), entityToUpdate, commandTimeout: commandTimeout, transaction: transaction);
-            return updated > 0;
+
+            if (includeRowVersion)
+            {
+                sb.Append(" and xmin::text::bigint = @RowVersion");
+                sb.Append(" returning xmin::text::bigint");
+
+                var newXmin = connection.QuerySingleOrDefault<long?>(
+                    sb.ToString(), entityToUpdate, transaction, commandTimeout);
+
+                if (newXmin == null)
+                {
+                    // Determine if it's a conflict or not found
+                    var keyProperty = keyProperties.First();
+                    var id = keyProperty.GetValue(entityToUpdate);
+
+                    var currentXmin = connection.QuerySingleOrDefault<long?>(
+                        $"SELECT xmin::text::bigint FROM {name} WHERE {keyProperty.Name} = @Id",
+                        new { Id = id }, transaction, commandTimeout);
+
+                    if (currentXmin != null)
+                    {
+                        // Row exists but version didn't match — conflict
+                        throw new ConcurrencyConflictException(
+                            type,
+                            id,
+                            ((IVersionedEntity)entityToUpdate).RowVersion,
+                            currentXmin);
+                    }
+
+                    // Row doesn't exist
+                    return false;
+                }
+
+                ((IVersionedEntity)entityToUpdate).RowVersion = newXmin.Value;
+                return true;
+            }
+            else
+            {
+                var updated = connection.Execute(sb.ToString(), entityToUpdate, commandTimeout: commandTimeout, transaction: transaction);
+                return updated > 0;
+            }
         }
 
         /// <summary>
@@ -586,6 +637,12 @@ namespace Dapper.Contrib.Extensions
             return AdapterDictionary.TryGetValue(name, out var adapter)
                 ? adapter
                 : DefaultAdapter;
+        }
+        
+        private static bool IsPostgreSql(IDbConnection connection)
+        {
+            var adapter = GetFormatter(connection);
+            return adapter is PostgresAdapter;
         }
 
         private static class ProxyGenerator
@@ -843,6 +900,60 @@ namespace Dapper.Contrib.Extensions
 }
 
 /// <summary>
+/// Defines an entity that supports versioning for concurrency control.
+/// </summary>
+public interface IVersionedEntity
+{
+    /// <summary>
+    /// A property representing the row version for concurrency control.
+    /// </summary>
+    long? RowVersion { get; set; }
+}
+
+/// <summary>
+/// Exception thrown when an update fails due to a concurrency conflict.
+/// This occurs when the row has been modified by another process since it was fetched.
+/// </summary>
+public class ConcurrencyConflictException : Exception
+{
+    /// <summary>
+    /// The type of entity that had the conflict.
+    /// </summary>
+    public Type EntityType { get; }
+
+    /// <summary>
+    /// The primary key value of the entity that had the conflict.
+    /// </summary>
+    public object Id { get; }
+
+    /// <summary>
+    /// The xmin version that was expected (from when the entity was fetched).
+    /// </summary>
+    public long? ExpectedVersion { get; }
+
+    /// <summary>
+    /// The current xmin version in the database, or null if the row was deleted.
+    /// </summary>
+    public long? ActualVersion { get; }
+
+    /// <summary>
+    /// Creates a new instance of <see cref="ConcurrencyConflictException"/>.
+    /// </summary>
+    /// <param name="entityType">The type of entity that had the conflict.</param>
+    /// <param name="id">The primary key value of the entity.</param>
+    /// <param name="expectedVersion">The xmin version that was expected.</param>
+    /// <param name="actualVersion">The current xmin version in the database, or null if deleted.</param>
+    public ConcurrencyConflictException(Type entityType, object id, long? expectedVersion, long? actualVersion)
+        : base($"Concurrency conflict on {entityType.Name} with ID {id}. Expected version {expectedVersion}, but found {actualVersion.ToString() ?? "row deleted"}.")
+    {
+        EntityType = entityType;
+        Id = id;
+        ExpectedVersion = expectedVersion;
+        ActualVersion = actualVersion;
+    }
+}
+
+/// <summary>
 /// The interface for all Dapper.Contrib database operations
 /// Implementing this is each provider's model.
 /// </summary>
@@ -1067,9 +1178,13 @@ public partial class PostgresAdapter : ISqlAdapter
 
         // If no primary key then safe to assume a join table with not too much data to return
         var propertyInfos = keyProperties as PropertyInfo[] ?? keyProperties.ToArray();
+        var includeRowVersion = entityToInsert is IVersionedEntity;
+
         if (propertyInfos.Length == 0)
         {
             sb.Append(" RETURNING *");
+            if (includeRowVersion)
+                sb.Append(", xmin::text::bigint AS rowversion");
         }
         else
         {
@@ -1082,6 +1197,8 @@ public partial class PostgresAdapter : ISqlAdapter
                 first = false;
                 sb.Append(property.Name);
             }
+            if (includeRowVersion)
+                sb.Append(", xmin::text::bigint AS rowversion");
         }
 
         var results = connection.Query(sb.ToString(), entityToInsert, transaction, commandTimeout: commandTimeout).ToList();
@@ -1095,6 +1212,13 @@ public partial class PostgresAdapter : ISqlAdapter
             if (id == 0)
                 id = Convert.ToInt64(value);
         }
+
+        if (includeRowVersion)
+        {
+            var rowVersion = ((IDictionary<string, object>)results[0])["rowversion"];
+            ((IVersionedEntity)entityToInsert).RowVersion = Convert.ToInt64(rowVersion);
+        }
+
         return id;
     }
 
