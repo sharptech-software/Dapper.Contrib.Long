@@ -6,8 +6,9 @@ using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 using Dapper;
+using Dapper.Contrib.Long.Adapters;
 
-namespace Dapper.Contrib.Extensions
+namespace Dapper.Contrib.Long
 {
     public static partial class SqlMapperExtensions
     {
@@ -232,8 +233,9 @@ namespace Dapper.Contrib.Extensions
         /// <param name="entityToUpdate">Entity to be updated</param>
         /// <param name="transaction">The transaction to run under, null (the default) if none</param>
         /// <param name="commandTimeout">Number of seconds before command execution timeout</param>
+        /// <param name="overrideRowVersion">If true, will skip checking RowVersion even if the entity implements IVersionedEntity</param>
         /// <returns>true if updated, false if not found or not modified (tracked entities) or concurrency conflict (versioned entities)</returns>
-        public static async Task<bool> UpdateAsync<T>(this IDbConnection connection, T entityToUpdate, IDbTransaction? transaction = null, int? commandTimeout = null) where T : class
+        public static async Task<bool> UpdateAsync<T>(this IDbConnection connection, T entityToUpdate, IDbTransaction? transaction = null, int? commandTimeout = null, bool overrideRowVersion = false) where T : class
         {
             if ((entityToUpdate is IProxy proxy) && !proxy.IsDirty)
             {
@@ -266,7 +268,7 @@ namespace Dapper.Contrib.Extensions
 
             var includeRowVersion = typeof(IVersionedEntity).IsAssignableFrom(type) && IsPostgreSql(connection);
 
-            if (includeRowVersion)
+            if (includeRowVersion && overrideRowVersion == false)
             {
                 var versionedEntity = (IVersionedEntity)entityToUpdate;
                 if (versionedEntity.RowVersion == null)
@@ -303,13 +305,15 @@ namespace Dapper.Contrib.Extensions
 
             if (includeRowVersion)
             {
-                sb.Append(" and xmin::text::bigint = @RowVersion");
+                if (overrideRowVersion == false)
+                    sb.Append(" and xmin::text::bigint = @RowVersion");
+
                 sb.Append(" returning xmin::text::bigint");
 
                 var newXmin = await connection.QuerySingleOrDefaultAsync<long?>(
                     sb.ToString(), entityToUpdate, transaction, commandTimeout).ConfigureAwait(false);
 
-                if (newXmin == null)
+                if (newXmin == null && overrideRowVersion == false)
                 {
                     // Determine if it's a conflict or not found
                     var keyProperty = keyProperties.First();
@@ -333,7 +337,7 @@ namespace Dapper.Contrib.Extensions
                     return false;
                 }
 
-                ((IVersionedEntity)entityToUpdate).RowVersion = newXmin.Value;
+                ((IVersionedEntity)entityToUpdate).RowVersion = newXmin;
                 return true;
             }
             else
@@ -418,248 +422,252 @@ namespace Dapper.Contrib.Extensions
     }
 }
 
-public partial interface ISqlAdapter
+namespace Dapper.Contrib.Long.Adapters
 {
-    /// <summary>
-    /// Inserts <paramref name="entityToInsert"/> into the database, returning the Id of the row created.
-    /// </summary>
-    /// <param name="connection">The connection to use.</param>
-    /// <param name="transaction">The transaction to use.</param>
-    /// <param name="commandTimeout">The command timeout to use.</param>
-    /// <param name="tableName">The table to insert into.</param>
-    /// <param name="columnList">The columns to set with this insert.</param>
-    /// <param name="parameterList">The parameters to set for this insert.</param>
-    /// <param name="keyProperties">The key columns in this table.</param>
-    /// <param name="entityToInsert">The entity to insert.</param>
-    /// <returns>The Id of the row created.</returns>
-    Task<long> InsertAsync(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert);
-}
-
-public partial class SqlServerAdapter
-{
-    /// <summary>
-    /// Inserts <paramref name="entityToInsert"/> into the database, returning the Id of the row created.
-    /// </summary>
-    /// <param name="connection">The connection to use.</param>
-    /// <param name="transaction">The transaction to use.</param>
-    /// <param name="commandTimeout">The command timeout to use.</param>
-    /// <param name="tableName">The table to insert into.</param>
-    /// <param name="columnList">The columns to set with this insert.</param>
-    /// <param name="parameterList">The parameters to set for this insert.</param>
-    /// <param name="keyProperties">The key columns in this table.</param>
-    /// <param name="entityToInsert">The entity to insert.</param>
-    /// <returns>The Id of the row created.</returns>
-    public async Task<long> InsertAsync(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
+    public partial interface ISqlAdapter
     {
-        var cmd = $"INSERT INTO {tableName} ({columnList}) values ({parameterList}); SELECT SCOPE_IDENTITY() id";
-        var multi = await connection.QueryMultipleAsync(cmd, entityToInsert, transaction, commandTimeout).ConfigureAwait(false);
-
-        var first = await multi.ReadFirstOrDefaultAsync().ConfigureAwait(false);
-        if (first == null || first.id == null) return 0;
-
-        var id = (long)first.id;
-        var pi = keyProperties as PropertyInfo[] ?? keyProperties.ToArray();
-        if (pi.Length == 0) return id;
-
-        var idp = pi[0];
-        idp.SetValue(entityToInsert, Convert.ChangeType(id, idp.PropertyType), null);
-
-        return id;
+        /// <summary>
+        /// Inserts <paramref name="entityToInsert"/> into the database, returning the Id of the row created.
+        /// </summary>
+        /// <param name="connection">The connection to use.</param>
+        /// <param name="transaction">The transaction to use.</param>
+        /// <param name="commandTimeout">The command timeout to use.</param>
+        /// <param name="tableName">The table to insert into.</param>
+        /// <param name="columnList">The columns to set with this insert.</param>
+        /// <param name="parameterList">The parameters to set for this insert.</param>
+        /// <param name="keyProperties">The key columns in this table.</param>
+        /// <param name="entityToInsert">The entity to insert.</param>
+        /// <returns>The Id of the row created.</returns>
+        Task<long> InsertAsync(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert);
     }
-}
 
-public partial class SqlCeServerAdapter
-{
-    /// <summary>
-    /// Inserts <paramref name="entityToInsert"/> into the database, returning the Id of the row created.
-    /// </summary>
-    /// <param name="connection">The connection to use.</param>
-    /// <param name="transaction">The transaction to use.</param>
-    /// <param name="commandTimeout">The command timeout to use.</param>
-    /// <param name="tableName">The table to insert into.</param>
-    /// <param name="columnList">The columns to set with this insert.</param>
-    /// <param name="parameterList">The parameters to set for this insert.</param>
-    /// <param name="keyProperties">The key columns in this table.</param>
-    /// <param name="entityToInsert">The entity to insert.</param>
-    /// <returns>The Id of the row created.</returns>
-    public async Task<long> InsertAsync(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
+    public partial class SqlServerAdapter
     {
-        var cmd = $"INSERT INTO {tableName} ({columnList}) VALUES ({parameterList})";
-        await connection.ExecuteAsync(cmd, entityToInsert, transaction, commandTimeout).ConfigureAwait(false);
-        var r = (await connection.QueryAsync<dynamic>("SELECT @@IDENTITY id", transaction: transaction, commandTimeout: commandTimeout).ConfigureAwait(false)).ToList();
-
-        if (r[0] == null || r[0].id == null) return 0;
-        var id = (long)r[0].id;
-
-        var pi = keyProperties as PropertyInfo[] ?? keyProperties.ToArray();
-        if (pi.Length == 0) return id;
-
-        var idp = pi[0];
-        idp.SetValue(entityToInsert, Convert.ChangeType(id, idp.PropertyType), null);
-
-        return id;
-    }
-}
-
-public partial class MySqlAdapter
-{
-    /// <summary>
-    /// Inserts <paramref name="entityToInsert"/> into the database, returning the Id of the row created.
-    /// </summary>
-    /// <param name="connection">The connection to use.</param>
-    /// <param name="transaction">The transaction to use.</param>
-    /// <param name="commandTimeout">The command timeout to use.</param>
-    /// <param name="tableName">The table to insert into.</param>
-    /// <param name="columnList">The columns to set with this insert.</param>
-    /// <param name="parameterList">The parameters to set for this insert.</param>
-    /// <param name="keyProperties">The key columns in this table.</param>
-    /// <param name="entityToInsert">The entity to insert.</param>
-    /// <returns>The Id of the row created.</returns>
-    public async Task<long> InsertAsync(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string tableName,
-        string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
-    {
-        var cmd = $"INSERT INTO {tableName} ({columnList}) VALUES ({parameterList})";
-        await connection.ExecuteAsync(cmd, entityToInsert, transaction, commandTimeout).ConfigureAwait(false);
-        var r = await connection.QueryAsync<dynamic>("SELECT LAST_INSERT_ID() id", transaction: transaction, commandTimeout: commandTimeout).ConfigureAwait(false);
-
-        var id = r.First().id;
-        if (id == null) return 0;
-        var pi = keyProperties as PropertyInfo[] ?? keyProperties.ToArray();
-        if (pi.Length == 0) return Convert.ToInt64(id);
-
-        var idp = pi[0];
-        idp.SetValue(entityToInsert, Convert.ChangeType(id, idp.PropertyType), null);
-
-        return Convert.ToInt64(id);
-    }
-}
-
-public partial class PostgresAdapter
-{
-    /// <summary>
-    /// Inserts <paramref name="entityToInsert"/> into the database, returning the Id of the row created.
-    /// </summary>
-    /// <param name="connection">The connection to use.</param>
-    /// <param name="transaction">The transaction to use.</param>
-    /// <param name="commandTimeout">The command timeout to use.</param>
-    /// <param name="tableName">The table to insert into.</param>
-    /// <param name="columnList">The columns to set with this insert.</param>
-    /// <param name="parameterList">The parameters to set for this insert.</param>
-    /// <param name="keyProperties">The key columns in this table.</param>
-    /// <param name="entityToInsert">The entity to insert.</param>
-    /// <returns>The Id of the row created.</returns>
-    public async Task<long> InsertAsync(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
-    {
-        var sb = new StringBuilder();
-        sb.AppendFormat("INSERT INTO {0} ({1}) VALUES ({2})", tableName, columnList, parameterList);
-
-        // If no primary key then safe to assume a join table with not too much data to return
-        var propertyInfos = keyProperties as PropertyInfo[] ?? keyProperties.ToArray();
-        var includeRowVersion = entityToInsert is IVersionedEntity;
-
-        if (propertyInfos.Length == 0)
+        /// <summary>
+        /// Inserts <paramref name="entityToInsert"/> into the database, returning the Id of the row created.
+        /// </summary>
+        /// <param name="connection">The connection to use.</param>
+        /// <param name="transaction">The transaction to use.</param>
+        /// <param name="commandTimeout">The command timeout to use.</param>
+        /// <param name="tableName">The table to insert into.</param>
+        /// <param name="columnList">The columns to set with this insert.</param>
+        /// <param name="parameterList">The parameters to set for this insert.</param>
+        /// <param name="keyProperties">The key columns in this table.</param>
+        /// <param name="entityToInsert">The entity to insert.</param>
+        /// <returns>The Id of the row created.</returns>
+        public async Task<long> InsertAsync(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
         {
-            sb.Append(" RETURNING *");
-            if (includeRowVersion)
-                sb.Append(", xmin::text::bigint AS rowversion");
+            var cmd = $"INSERT INTO {tableName} ({columnList}) values ({parameterList}); SELECT SCOPE_IDENTITY() id";
+            var multi = await connection.QueryMultipleAsync(cmd, entityToInsert, transaction, commandTimeout).ConfigureAwait(false);
+
+            var first = await multi.ReadFirstOrDefaultAsync().ConfigureAwait(false);
+            if (first == null || first.id == null) return 0;
+
+            var id = (long)first.id;
+            var pi = keyProperties as PropertyInfo[] ?? keyProperties.ToArray();
+            if (pi.Length == 0) return id;
+
+            var idp = pi[0];
+            idp.SetValue(entityToInsert, Convert.ChangeType(id, idp.PropertyType), null);
+
+            return id;
         }
-        else
+    }
+
+    public partial class SqlCeServerAdapter
+    {
+        /// <summary>
+        /// Inserts <paramref name="entityToInsert"/> into the database, returning the Id of the row created.
+        /// </summary>
+        /// <param name="connection">The connection to use.</param>
+        /// <param name="transaction">The transaction to use.</param>
+        /// <param name="commandTimeout">The command timeout to use.</param>
+        /// <param name="tableName">The table to insert into.</param>
+        /// <param name="columnList">The columns to set with this insert.</param>
+        /// <param name="parameterList">The parameters to set for this insert.</param>
+        /// <param name="keyProperties">The key columns in this table.</param>
+        /// <param name="entityToInsert">The entity to insert.</param>
+        /// <returns>The Id of the row created.</returns>
+        public async Task<long> InsertAsync(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
         {
-            sb.Append(" RETURNING ");
-            bool first = true;
-            foreach (var property in propertyInfos)
+            var cmd = $"INSERT INTO {tableName} ({columnList}) VALUES ({parameterList})";
+            await connection.ExecuteAsync(cmd, entityToInsert, transaction, commandTimeout).ConfigureAwait(false);
+            var r = (await connection.QueryAsync<dynamic>("SELECT @@IDENTITY id", transaction: transaction, commandTimeout: commandTimeout).ConfigureAwait(false)).ToList();
+
+            if (r[0] == null || r[0].id == null) return 0;
+            var id = (long)r[0].id;
+
+            var pi = keyProperties as PropertyInfo[] ?? keyProperties.ToArray();
+            if (pi.Length == 0) return id;
+
+            var idp = pi[0];
+            idp.SetValue(entityToInsert, Convert.ChangeType(id, idp.PropertyType), null);
+
+            return id;
+        }
+    }
+
+    public partial class MySqlAdapter
+    {
+        /// <summary>
+        /// Inserts <paramref name="entityToInsert"/> into the database, returning the Id of the row created.
+        /// </summary>
+        /// <param name="connection">The connection to use.</param>
+        /// <param name="transaction">The transaction to use.</param>
+        /// <param name="commandTimeout">The command timeout to use.</param>
+        /// <param name="tableName">The table to insert into.</param>
+        /// <param name="columnList">The columns to set with this insert.</param>
+        /// <param name="parameterList">The parameters to set for this insert.</param>
+        /// <param name="keyProperties">The key columns in this table.</param>
+        /// <param name="entityToInsert">The entity to insert.</param>
+        /// <returns>The Id of the row created.</returns>
+        public async Task<long> InsertAsync(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string tableName,
+            string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
+        {
+            var cmd = $"INSERT INTO {tableName} ({columnList}) VALUES ({parameterList})";
+            await connection.ExecuteAsync(cmd, entityToInsert, transaction, commandTimeout).ConfigureAwait(false);
+            var r = await connection.QueryAsync<dynamic>("SELECT LAST_INSERT_ID() id", transaction: transaction, commandTimeout: commandTimeout).ConfigureAwait(false);
+
+            var id = r.First().id;
+            if (id == null) return 0;
+            var pi = keyProperties as PropertyInfo[] ?? keyProperties.ToArray();
+            if (pi.Length == 0) return Convert.ToInt64(id);
+
+            var idp = pi[0];
+            idp.SetValue(entityToInsert, Convert.ChangeType(id, idp.PropertyType), null);
+
+            return Convert.ToInt64(id);
+        }
+    }
+
+    public partial class PostgresAdapter
+    {
+        /// <summary>
+        /// Inserts <paramref name="entityToInsert"/> into the database, returning the Id of the row created.
+        /// </summary>
+        /// <param name="connection">The connection to use.</param>
+        /// <param name="transaction">The transaction to use.</param>
+        /// <param name="commandTimeout">The command timeout to use.</param>
+        /// <param name="tableName">The table to insert into.</param>
+        /// <param name="columnList">The columns to set with this insert.</param>
+        /// <param name="parameterList">The parameters to set for this insert.</param>
+        /// <param name="keyProperties">The key columns in this table.</param>
+        /// <param name="entityToInsert">The entity to insert.</param>
+        /// <returns>The Id of the row created.</returns>
+        public async Task<long> InsertAsync(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
+        {
+            var sb = new StringBuilder();
+            sb.AppendFormat("INSERT INTO {0} ({1}) VALUES ({2})", tableName, columnList, parameterList);
+
+            // If no primary key then safe to assume a join table with not too much data to return
+            var propertyInfos = keyProperties as PropertyInfo[] ?? keyProperties.ToArray();
+            var includeRowVersion = entityToInsert is IVersionedEntity;
+
+            if (propertyInfos.Length == 0)
             {
-                if (!first)
-                    sb.Append(", ");
-                first = false;
-                sb.Append(property.Name);
+                sb.Append(" RETURNING *");
+                if (includeRowVersion)
+                    sb.Append(", xmin::text::bigint AS rowversion");
             }
+            else
+            {
+                sb.Append(" RETURNING ");
+                bool first = true;
+                foreach (var property in propertyInfos)
+                {
+                    if (!first)
+                        sb.Append(", ");
+                    first = false;
+                    sb.Append(property.Name);
+                }
+                if (includeRowVersion)
+                    sb.Append(", xmin::text::bigint AS rowversion");
+            }
+
+            var results = await connection.QueryAsync(sb.ToString(), entityToInsert, transaction, commandTimeout).ConfigureAwait(false);
+
+            // Return the key by assigning the corresponding property in the object - by product is that it supports compound primary keys
+            long id = 0;
+            foreach (var p in propertyInfos)
+            {
+                var value = ((IDictionary<string, object>)results.First())[p.Name.ToLower()];
+                p.SetValue(entityToInsert, value, null);
+                if (id == 0)
+                    id = Convert.ToInt64(value);
+            }
+
             if (includeRowVersion)
-                sb.Append(", xmin::text::bigint AS rowversion");
+            {
+                var rowVersion = ((IDictionary<string, object>)results.First())["rowversion"];
+                ((IVersionedEntity)entityToInsert).RowVersion = Convert.ToInt64(rowVersion);
+            }
+
+            return id;
         }
-
-        var results = await connection.QueryAsync(sb.ToString(), entityToInsert, transaction, commandTimeout).ConfigureAwait(false);
-
-        // Return the key by assigning the corresponding property in the object - by product is that it supports compound primary keys
-        long id = 0;
-        foreach (var p in propertyInfos)
-        {
-            var value = ((IDictionary<string, object>)results.First())[p.Name.ToLower()];
-            p.SetValue(entityToInsert, value, null);
-            if (id == 0)
-                id = Convert.ToInt64(value);
-        }
-
-        if (includeRowVersion)
-        {
-            var rowVersion = ((IDictionary<string, object>)results.First())["rowversion"];
-            ((IVersionedEntity)entityToInsert).RowVersion = Convert.ToInt64(rowVersion);
-        }
-
-        return id;
     }
-}
 
-public partial class SQLiteAdapter
-{
-    /// <summary>
-    /// Inserts <paramref name="entityToInsert"/> into the database, returning the Id of the row created.
-    /// </summary>
-    /// <param name="connection">The connection to use.</param>
-    /// <param name="transaction">The transaction to use.</param>
-    /// <param name="commandTimeout">The command timeout to use.</param>
-    /// <param name="tableName">The table to insert into.</param>
-    /// <param name="columnList">The columns to set with this insert.</param>
-    /// <param name="parameterList">The parameters to set for this insert.</param>
-    /// <param name="keyProperties">The key columns in this table.</param>
-    /// <param name="entityToInsert">The entity to insert.</param>
-    /// <returns>The Id of the row created.</returns>
-    public async Task<long> InsertAsync(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
+    public partial class SQLiteAdapter
     {
-        var cmd = $"INSERT INTO {tableName} ({columnList}) VALUES ({parameterList}); SELECT last_insert_rowid() id";
-        var multi = await connection.QueryMultipleAsync(cmd, entityToInsert, transaction, commandTimeout).ConfigureAwait(false);
+        /// <summary>
+        /// Inserts <paramref name="entityToInsert"/> into the database, returning the Id of the row created.
+        /// </summary>
+        /// <param name="connection">The connection to use.</param>
+        /// <param name="transaction">The transaction to use.</param>
+        /// <param name="commandTimeout">The command timeout to use.</param>
+        /// <param name="tableName">The table to insert into.</param>
+        /// <param name="columnList">The columns to set with this insert.</param>
+        /// <param name="parameterList">The parameters to set for this insert.</param>
+        /// <param name="keyProperties">The key columns in this table.</param>
+        /// <param name="entityToInsert">The entity to insert.</param>
+        /// <returns>The Id of the row created.</returns>
+        public async Task<long> InsertAsync(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
+        {
+            var cmd = $"INSERT INTO {tableName} ({columnList}) VALUES ({parameterList}); SELECT last_insert_rowid() id";
+            var multi = await connection.QueryMultipleAsync(cmd, entityToInsert, transaction, commandTimeout).ConfigureAwait(false);
 
-        var id = (long)(await multi.ReadFirstAsync().ConfigureAwait(false)).id;
-        var pi = keyProperties as PropertyInfo[] ?? keyProperties.ToArray();
-        if (pi.Length == 0) return id;
+            var id = (long)(await multi.ReadFirstAsync().ConfigureAwait(false)).id;
+            var pi = keyProperties as PropertyInfo[] ?? keyProperties.ToArray();
+            if (pi.Length == 0) return id;
 
-        var idp = pi[0];
-        idp.SetValue(entityToInsert, Convert.ChangeType(id, idp.PropertyType), null);
+            var idp = pi[0];
+            idp.SetValue(entityToInsert, Convert.ChangeType(id, idp.PropertyType), null);
 
-        return id;
+            return id;
+        }
     }
-}
 
-public partial class FbAdapter
-{
-    /// <summary>
-    /// Inserts <paramref name="entityToInsert"/> into the database, returning the Id of the row created.
-    /// </summary>
-    /// <param name="connection">The connection to use.</param>
-    /// <param name="transaction">The transaction to use.</param>
-    /// <param name="commandTimeout">The command timeout to use.</param>
-    /// <param name="tableName">The table to insert into.</param>
-    /// <param name="columnList">The columns to set with this insert.</param>
-    /// <param name="parameterList">The parameters to set for this insert.</param>
-    /// <param name="keyProperties">The key columns in this table.</param>
-    /// <param name="entityToInsert">The entity to insert.</param>
-    /// <returns>The Id of the row created.</returns>
-    public async Task<long> InsertAsync(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
+    public partial class FbAdapter
     {
-        var cmd = $"insert into {tableName} ({columnList}) values ({parameterList})";
-        await connection.ExecuteAsync(cmd, entityToInsert, transaction, commandTimeout).ConfigureAwait(false);
+        /// <summary>
+        /// Inserts <paramref name="entityToInsert"/> into the database, returning the Id of the row created.
+        /// </summary>
+        /// <param name="connection">The connection to use.</param>
+        /// <param name="transaction">The transaction to use.</param>
+        /// <param name="commandTimeout">The command timeout to use.</param>
+        /// <param name="tableName">The table to insert into.</param>
+        /// <param name="columnList">The columns to set with this insert.</param>
+        /// <param name="parameterList">The parameters to set for this insert.</param>
+        /// <param name="keyProperties">The key columns in this table.</param>
+        /// <param name="entityToInsert">The entity to insert.</param>
+        /// <returns>The Id of the row created.</returns>
+        public async Task<long> InsertAsync(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string tableName, string columnList, string parameterList, IEnumerable<PropertyInfo> keyProperties, object entityToInsert)
+        {
+            var cmd = $"insert into {tableName} ({columnList}) values ({parameterList})";
+            await connection.ExecuteAsync(cmd, entityToInsert, transaction, commandTimeout).ConfigureAwait(false);
 
-        var propertyInfos = keyProperties as PropertyInfo[] ?? keyProperties.ToArray();
-        var keyName = propertyInfos[0].Name;
-        var r = await connection.QueryAsync($"SELECT FIRST 1 {keyName} ID FROM {tableName} ORDER BY {keyName} DESC", transaction: transaction, commandTimeout: commandTimeout).ConfigureAwait(false);
+            var propertyInfos = keyProperties as PropertyInfo[] ?? keyProperties.ToArray();
+            var keyName = propertyInfos[0].Name;
+            var r = await connection.QueryAsync($"SELECT FIRST 1 {keyName} ID FROM {tableName} ORDER BY {keyName} DESC", transaction: transaction, commandTimeout: commandTimeout).ConfigureAwait(false);
 
-        var id = r.First().ID;
-        if (id == null) return 0;
-        if (propertyInfos.Length == 0) return Convert.ToInt64(id);
+            var id = r.First().ID;
+            if (id == null) return 0;
+            if (propertyInfos.Length == 0) return Convert.ToInt64(id);
 
-        var idp = propertyInfos[0];
-        idp.SetValue(entityToInsert, Convert.ChangeType(id, idp.PropertyType), null);
+            var idp = propertyInfos[0];
+            idp.SetValue(entityToInsert, Convert.ChangeType(id, idp.PropertyType), null);
 
-        return Convert.ToInt64(id);
+            return Convert.ToInt64(id);
+        }
     }
+
 }
