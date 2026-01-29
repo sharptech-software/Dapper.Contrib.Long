@@ -520,7 +520,7 @@ namespace Dapper.Contrib.Long
                 var newXmin = connection.QuerySingleOrDefault<long?>(
                     sb.ToString(), entityToUpdate, transaction, commandTimeout);
 
-                if (newXmin == null && overrideRowVersion == false)
+                if (newXmin == null)
                 {
                     // Determine if it's a conflict or not found
                     var keyProperty = keyProperties.First();
@@ -529,19 +529,19 @@ namespace Dapper.Contrib.Long
                     var currentXmin = connection.QuerySingleOrDefault<long?>(
                         $"SELECT xmin::text::bigint FROM {name} WHERE {keyProperty.Name} = @Id",
                         new { Id = id }, transaction, commandTimeout);
-
-                    if (currentXmin != null)
+                    
+                    if (currentXmin == null)
                     {
-                        // Row exists but version didn't match — conflict
-                        throw new ConcurrencyConflictException(
-                            type,
-                            id,
-                            ((IVersionedEntity)entityToUpdate).RowVersion,
-                            currentXmin);
+                        // Row doesn't exist
+                        throw new EntityNotFoundException(type, id);
                     }
 
-                    // Row doesn't exist
-                    return false;
+                    // Row exists but version didn't match — conflict
+                    throw new ConcurrencyConflictException(
+                        type,
+                        id,
+                        ((IVersionedEntity)entityToUpdate).RowVersion,
+                        currentXmin);
                 }
 
                 ((IVersionedEntity)entityToUpdate).RowVersion = newXmin;
@@ -550,6 +550,10 @@ namespace Dapper.Contrib.Long
             else
             {
                 var updated = connection.Execute(sb.ToString(), entityToUpdate, commandTimeout: commandTimeout, transaction: transaction);
+
+                if (updated == 0)
+                    throw new EntityNotFoundException(type, keyProperties.First().GetValue(entityToUpdate));
+
                 return updated > 0;
             }
         }
@@ -960,6 +964,33 @@ namespace Dapper.Contrib.Long
         }
     }
 
+    /// <summary>
+    /// Exception thrown when an update or delete targets a row that does not exist.
+    /// </summary>
+    public class EntityNotFoundException : Exception
+    {
+        /// <summary>
+        /// The type of entity that was not found.
+        /// </summary>
+        public Type EntityType { get; }
+
+        /// <summary>
+        /// The primary key value that was not found.
+        /// </summary>
+        public object Id { get; }
+
+        /// <summary>
+        /// Creates a new instance of <see cref="EntityNotFoundException"/>.
+        /// </summary>
+        /// <param name="entityType">The type of entity that was not found.</param>
+        /// <param name="id">The primary key value that was not found.</param>
+        public EntityNotFoundException(Type entityType, object id)
+            : base($"{entityType.Name} with ID {id} was not found.")
+        {
+            EntityType = entityType;
+            Id = id;
+        }
+    }
 }
 
 namespace Dapper.Contrib.Long.Adapters

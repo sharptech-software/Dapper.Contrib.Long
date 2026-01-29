@@ -235,6 +235,8 @@ namespace Dapper.Contrib.Long
         /// <param name="commandTimeout">Number of seconds before command execution timeout</param>
         /// <param name="overrideRowVersion">If true, will skip checking RowVersion even if the entity implements IVersionedEntity</param>
         /// <returns>true if updated, false if not found or not modified (tracked entities) or concurrency conflict (versioned entities)</returns>
+        /// <exception cref="EntityNotFoundException">Thrown when the entity does not exist in the database.</exception>
+        /// <exception cref="ConcurrencyConflictException">Thrown when the entity has been modified by another process.</exception>
         public static async Task<bool> UpdateAsync<T>(this IDbConnection connection, T entityToUpdate, IDbTransaction? transaction = null, int? commandTimeout = null, bool overrideRowVersion = false) where T : class
         {
             if ((entityToUpdate is IProxy proxy) && !proxy.IsDirty)
@@ -313,7 +315,7 @@ namespace Dapper.Contrib.Long
                 var newXmin = await connection.QuerySingleOrDefaultAsync<long?>(
                     sb.ToString(), entityToUpdate, transaction, commandTimeout).ConfigureAwait(false);
 
-                if (newXmin == null && overrideRowVersion == false)
+                if (newXmin == null)
                 {
                     // Determine if it's a conflict or not found
                     var keyProperty = keyProperties.First();
@@ -323,18 +325,18 @@ namespace Dapper.Contrib.Long
                         $"SELECT xmin::text::bigint FROM {name} WHERE {keyProperty.Name} = @Id",
                         new { Id = id }, transaction, commandTimeout).ConfigureAwait(false);
 
-                    if (currentXmin != null)
+                    if (currentXmin == null)
                     {
-                        // Row exists but version didn't match — conflict
-                        throw new ConcurrencyConflictException(
-                            type,
-                            id,
-                            ((IVersionedEntity)entityToUpdate).RowVersion,
-                            currentXmin);
+                        // Row doesn't exist
+                        throw new EntityNotFoundException(type, id);
                     }
 
-                    // Row doesn't exist
-                    return false;
+                    // Row exists but version didn't match — conflict
+                    throw new ConcurrencyConflictException(
+                        type,
+                        id,
+                        ((IVersionedEntity)entityToUpdate).RowVersion,
+                        currentXmin);
                 }
 
                 ((IVersionedEntity)entityToUpdate).RowVersion = newXmin;
@@ -343,6 +345,10 @@ namespace Dapper.Contrib.Long
             else
             {
                 var updated = await connection.ExecuteAsync(sb.ToString(), entityToUpdate, commandTimeout: commandTimeout, transaction: transaction).ConfigureAwait(false);
+
+                if (updated == 0)
+                    throw new EntityNotFoundException(type, keyProperties.First().GetValue(entityToUpdate));
+
                 return updated > 0;
             }
         }
