@@ -91,8 +91,10 @@ namespace Dapper.Contrib.Long
             {
                 GetSingleKey<T>(nameof(GetAll));
                 var name = GetTableName(type);
+                var includeRowVersion = typeof(IVersionedEntity).IsAssignableFrom(type) && IsPostgreSql(connection);
+                var columns = includeRowVersion ? "*, xmin::text::bigint AS RowVersion" : "*";
 
-                sql = "SELECT * FROM " + name;
+                sql = $"SELECT {columns} FROM {name}";
                 GetQueries[cacheType.TypeHandle] = sql;
             }
 
@@ -107,6 +109,8 @@ namespace Dapper.Contrib.Long
         {
             var result = await connection.QueryAsync(sql, transaction: transaction, commandTimeout: commandTimeout).ConfigureAwait(false);
             var list = new List<T>();
+            var includeRowVersion = typeof(IVersionedEntity).IsAssignableFrom(type) && IsPostgreSql(connection);
+
             foreach (IDictionary<string, object> res in result)
             {
                 var obj = ProxyGenerator.GetInterfaceProxy<T>();
@@ -124,6 +128,12 @@ namespace Dapper.Contrib.Long
                         property.SetValue(obj, Convert.ChangeType(val, property.PropertyType), null);
                     }
                 }
+
+                if (includeRowVersion && res.TryGetValue("rowversion", out var rowVersion))
+                {
+                    ((IVersionedEntity)obj).RowVersion = Convert.ToInt64(rowVersion);
+                }
+
                 ((IProxy)obj).IsDirty = false;   //reset change tracking and return
                 list.Add(obj);
             }

@@ -256,36 +256,48 @@ namespace Dapper.Contrib.Long
             {
                 GetSingleKey<T>(nameof(GetAll));
                 var name = GetTableName(type);
+                var includeRowVersion = typeof(IVersionedEntity).IsAssignableFrom(type) && IsPostgreSql(connection);
+                var columns = includeRowVersion ? "*, xmin::text::bigint AS RowVersion" : "*";
 
-                sql = "select * from " + name;
+                sql = $"select {columns} from {name}";
                 GetQueries[cacheType.TypeHandle] = sql;
             }
 
             if (!type.IsInterface) return connection.Query<T>(sql, null, transaction, commandTimeout: commandTimeout);
 
-            var result = connection.Query(sql);
-            var list = new List<T>();
-            foreach (IDictionary<string, object> res in result)
             {
-                var obj = ProxyGenerator.GetInterfaceProxy<T>();
-                foreach (var property in TypePropertiesCache(type))
+                var result = connection.Query(sql);
+                var list = new List<T>();
+                var includeRowVersion = typeof(IVersionedEntity).IsAssignableFrom(type) && IsPostgreSql(connection);
+
+                foreach (IDictionary<string, object> res in result)
                 {
-                    var val = res[property.Name];
-                    if (val == null) continue;
-                    if (property.PropertyType.IsGenericType && property.PropertyType.GetGenericTypeDefinition() == typeof(Nullable<>))
+                    var obj = ProxyGenerator.GetInterfaceProxy<T>();
+                    foreach (var property in TypePropertiesCache(type))
                     {
-                        var genericType = Nullable.GetUnderlyingType(property.PropertyType);
-                        if (genericType != null) property.SetValue(obj, Convert.ChangeType(val, genericType), null);
+                        var val = res[property.Name];
+                        if (val == null) continue;
+                        if (property.PropertyType.IsGenericType && property.PropertyType.GetGenericTypeDefinition() == typeof(Nullable<>))
+                        {
+                            var genericType = Nullable.GetUnderlyingType(property.PropertyType);
+                            if (genericType != null) property.SetValue(obj, Convert.ChangeType(val, genericType), null);
+                        }
+                        else
+                        {
+                            property.SetValue(obj, Convert.ChangeType(val, property.PropertyType), null);
+                        }
                     }
-                    else
+
+                    if (includeRowVersion && res.TryGetValue("rowversion", out var rowVersion))
                     {
-                        property.SetValue(obj, Convert.ChangeType(val, property.PropertyType), null);
+                        ((IVersionedEntity)obj).RowVersion = Convert.ToInt64(rowVersion);
                     }
+
+                    ((IProxy)obj).IsDirty = false;   //reset change tracking and return
+                    list.Add(obj);
                 }
-                ((IProxy)obj).IsDirty = false;   //reset change tracking and return
-                list.Add(obj);
+                return list;
             }
-            return list;
         }
 
         /// <summary>
