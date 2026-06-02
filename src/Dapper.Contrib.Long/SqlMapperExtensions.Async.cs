@@ -4,6 +4,7 @@ using System.Data;
 using System.Linq;
 using System.Reflection;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Dapper;
 using Dapper.Contrib.Long.Adapters;
@@ -22,6 +23,7 @@ namespace Dapper.Contrib.Long
         /// <param name="id">Id of the entity to get, must be marked with [Key] attribute</param>
         /// <param name="transaction">The transaction to run under, null (the default) if none</param>
         /// <param name="commandTimeout">Number of seconds before command execution timeout</param>
+        /// <param name="cancellationToken">Cancellation token for the async operation</param>
         /// <returns>Entity of T</returns>
         public static async Task<T> GetAsync<T>(this IDbConnection connection, dynamic id, IDbTransaction? transaction = null, int? commandTimeout = null) where T : class
         {
@@ -108,6 +110,72 @@ namespace Dapper.Contrib.Long
         private static async Task<IEnumerable<T>> GetAllAsyncImpl<T>(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string sql, Type type) where T : class
         {
             var result = await connection.QueryAsync(sql, transaction: transaction, commandTimeout: commandTimeout).ConfigureAwait(false);
+            var list = new List<T>();
+            var includeRowVersion = typeof(IVersionedEntity).IsAssignableFrom(type) && IsPostgreSql(connection);
+
+            foreach (IDictionary<string, object> res in result)
+            {
+                var obj = ProxyGenerator.GetInterfaceProxy<T>();
+                foreach (var property in TypePropertiesCache(type))
+                {
+                    var val = res[property.Name];
+                    if (val == null) continue;
+                    if (property.PropertyType.IsGenericType && property.PropertyType.GetGenericTypeDefinition() == typeof(Nullable<>))
+                    {
+                        var genericType = Nullable.GetUnderlyingType(property.PropertyType);
+                        if (genericType != null) property.SetValue(obj, Convert.ChangeType(val, genericType), null);
+                    }
+                    else
+                    {
+                        property.SetValue(obj, Convert.ChangeType(val, property.PropertyType), null);
+                    }
+                }
+
+                if (includeRowVersion && res.TryGetValue("rowversion", out var rowVersion))
+                {
+                    ((IVersionedEntity)obj).RowVersion = Convert.ToInt64(rowVersion);
+                }
+
+                ((IProxy)obj).IsDirty = false;   //reset change tracking and return
+                list.Add(obj);
+            }
+            return list;
+        }
+
+        /// <summary>
+        /// Returns a list of entities from table "Ts".  
+        /// Id of T must be marked with [Key] attribute.
+        /// Entities created from interfaces are tracked/intercepted for changes and used by the Update() extension
+        /// for optimal performance. 
+        /// </summary>
+        /// <typeparam name="T">Interface or type to create and populate</typeparam>
+        /// <param name="connection">Open SqlConnection</param>
+        /// <param name="completeWhereClause">Complete where clause to append to the query, e.g. "WHERE IsDeleted = 0"</param>
+        /// <param name="param">Parameters to pass with the where clause, if any</param>
+        /// <param name="transaction">The transaction to run under, null (the default) if none</param>
+        /// <param name="commandTimeout">Number of seconds before command execution timeout</param>
+        /// <returns>Entity of T</returns>
+        public static Task<IEnumerable<T>> GetByCompleteWhereClauseAsync<T>(this IDbConnection connection, string completeWhereClause, object? param = null, IDbTransaction? transaction = null, int? commandTimeout = null) where T : class
+        {
+            var type = typeof(T);
+
+            var name = GetTableName(type);
+
+            var includeRowVersion = typeof(IVersionedEntity).IsAssignableFrom(type) && IsPostgreSql(connection);
+            var columns = includeRowVersion ? "*, xmin::text::bigint AS RowVersion" : "*";
+
+            var sql = $"SELECT {columns} FROM {name} {completeWhereClause}";
+
+            if (!type.IsInterface)
+            {
+                return connection.QueryAsync<T>(sql, param, transaction, commandTimeout);
+            }
+            return GetByCompleteWhereClauseAsyncImpl<T>(connection, transaction, commandTimeout, sql, param, type);
+        }
+
+        private static async Task<IEnumerable<T>> GetByCompleteWhereClauseAsyncImpl<T>(IDbConnection connection, IDbTransaction? transaction, int? commandTimeout, string sql, object? param, Type type) where T : class
+        {
+            var result = await connection.QueryAsync(sql, param, transaction: transaction, commandTimeout: commandTimeout).ConfigureAwait(false);
             var list = new List<T>();
             var includeRowVersion = typeof(IVersionedEntity).IsAssignableFrom(type) && IsPostgreSql(connection);
 
