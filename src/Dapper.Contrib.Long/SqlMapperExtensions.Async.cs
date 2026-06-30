@@ -503,6 +503,86 @@ namespace Dapper.Contrib.Long
             var deleted = await connection.ExecuteAsync(statement, null, transaction, commandTimeout).ConfigureAwait(false);
             return deleted > 0;
         }
+
+        /// <summary>
+        /// Delete entity in table "Ts" by key value asynchronously, without needing a full entity instance.
+        /// </summary>
+        /// <typeparam name="T">Type of entity</typeparam>
+        /// <param name="connection">Open SqlConnection</param>
+        /// <param name="id">The key value of the entity to delete</param>
+        /// <param name="transaction">The transaction to run under, null (the default) if none</param>
+        /// <param name="commandTimeout">Number of seconds before command execution timeout</param>
+        /// <returns>true if deleted, false if not found</returns>
+        public static async Task<bool> DeleteByIdAsync<T>(this IDbConnection connection, long id, IDbTransaction? transaction = null, int? commandTimeout = null) where T : class
+        {
+            var type = typeof(T);
+
+            var keyProperties = KeyPropertiesCache(type);
+            var explicitKeyProperties = ExplicitKeyPropertiesCache(type);
+            if (keyProperties.Count == 0 && explicitKeyProperties.Count == 0)
+                throw new ArgumentException("Entity must have at least one [Key] or [ExplicitKey] property");
+
+            var allKeyProperties = keyProperties.Concat(explicitKeyProperties).ToList();
+            if (allKeyProperties.Count > 1)
+                throw new ArgumentException("DeleteByIdAsync only supports entities with a single key property");
+
+            var keyProperty = allKeyProperties[0];
+            var name = GetTableName(type);
+
+            var sb = new StringBuilder();
+            sb.AppendFormat("DELETE FROM {0} WHERE ", name);
+            var adapter = GetFormatter(connection);
+            adapter.AppendColumnNameEqualsValue(sb, keyProperty.Name);
+
+            var parameters = new DynamicParameters();
+            parameters.Add(keyProperty.Name, id);
+
+            var deleted = await connection.ExecuteAsync(sb.ToString(), parameters, transaction, commandTimeout).ConfigureAwait(false);
+            return deleted > 0;
+        }
+
+        /// <summary>
+        /// Delete entities in table "Ts" by a set of key values asynchronously, without needing full entity instances.
+        /// </summary>
+        /// <typeparam name="T">Type of entity</typeparam>
+        /// <param name="connection">Open SqlConnection</param>
+        /// <param name="ids">The key values of the entities to delete</param>
+        /// <param name="transaction">The transaction to run under, null (the default) if none</param>
+        /// <param name="commandTimeout">Number of seconds before command execution timeout</param>
+        /// <returns>true if one or more rows were deleted, false if none</returns>
+        public static async Task<bool> DeleteByIdsAsync<T>(this IDbConnection connection, IEnumerable<long> ids, IDbTransaction? transaction = null, int? commandTimeout = null) where T : class
+        {
+            if (ids == null)
+                throw new ArgumentNullException(nameof(ids));
+
+            var idList = ids as IList<long> ?? ids.ToList();
+            if (idList.Count == 0)
+                return false;
+
+            var type = typeof(T);
+
+            var keyProperties = KeyPropertiesCache(type);
+            var explicitKeyProperties = ExplicitKeyPropertiesCache(type);
+            if (keyProperties.Count == 0 && explicitKeyProperties.Count == 0)
+                throw new ArgumentException("Entity must have at least one [Key] or [ExplicitKey] property");
+
+            var allKeyProperties = keyProperties.Concat(explicitKeyProperties).ToList();
+            if (allKeyProperties.Count > 1)
+                throw new ArgumentException("DeleteByIdsAsync only supports entities with a single key property");
+
+            var keyProperty = allKeyProperties[0];
+            var name = GetTableName(type);
+
+            var sb = new StringBuilder();
+            sb.AppendFormat("DELETE FROM {0} WHERE ", name);
+            var adapter = GetFormatter(connection);
+            adapter.AppendColumnName(sb, keyProperty.Name);
+            sb.Append(" IN @ids");
+
+            var deleted = await connection.ExecuteAsync(sb.ToString(), new { ids = idList }, transaction, commandTimeout).ConfigureAwait(false);
+            return deleted > 0;
+        }
+
     }
 }
 
